@@ -97,6 +97,7 @@ struct amlogic_thermal {
 	const struct amlogic_thermal_data *data;
 	struct regmap *regmap;
 	struct regmap *sec_ao_map;
+	void __iomem *trim_info_reg;
 	struct clk *clk;
 	struct thermal_zone_device *tzd;
 	u32 trim_info;
@@ -138,8 +139,11 @@ static int amlogic_thermal_initialize(struct amlogic_thermal *pdata)
 	int ret = 0;
 	int ver;
 
-	regmap_read(pdata->sec_ao_map, pdata->data->u_efuse_off,
-		    &pdata->trim_info);
+	if (!IS_ERR(pdata->trim_info_reg))
+		pdata->trim_info = readl(pdata->trim_info_reg);
+	else
+		regmap_read(pdata->sec_ao_map, pdata->data->u_efuse_off,
+			    &pdata->trim_info);
 
 	ver = TSENSOR_TRIM_VERSION(pdata->trim_info);
 
@@ -167,11 +171,13 @@ static int amlogic_thermal_enable(struct amlogic_thermal *data)
 	return 0;
 }
 
-static void amlogic_thermal_disable(struct amlogic_thermal *data)
+static int amlogic_thermal_disable(struct amlogic_thermal *data)
 {
 	regmap_update_bits(data->regmap, TSENSOR_CFG_REG1,
 			   TSENSOR_CFG_REG1_ENABLE, 0);
 	clk_disable_unprepare(data->clk);
+
+	return 0;
 }
 
 static int amlogic_thermal_get_temp(struct thermal_zone_device *tz, int *temp)
@@ -220,12 +226,6 @@ static const struct amlogic_thermal_data amlogic_thermal_g12a_ddr_param = {
 	.regmap_config = &amlogic_thermal_regmap_config_g12a,
 };
 
-static const struct amlogic_thermal_data amlogic_thermal_a1_cpu_param = {
-	.u_efuse_off = 0x114,
-	.calibration_parameters = &amlogic_thermal_g12a,
-	.regmap_config = &amlogic_thermal_regmap_config_g12a,
-};
-
 static const struct of_device_id of_amlogic_thermal_match[] = {
 	{
 		.compatible = "amlogic,g12a-ddr-thermal",
@@ -234,10 +234,6 @@ static const struct of_device_id of_amlogic_thermal_match[] = {
 	{
 		.compatible = "amlogic,g12a-cpu-thermal",
 		.data = &amlogic_thermal_g12a_cpu_param,
-	},
-	{
-		.compatible = "amlogic,a1-cpu-thermal",
-		.data = &amlogic_thermal_a1_cpu_param,
 	},
 	{ /* sentinel */ }
 };
@@ -271,11 +267,14 @@ static int amlogic_thermal_probe(struct platform_device *pdev)
 	if (IS_ERR(pdata->clk))
 		return dev_err_probe(dev, PTR_ERR(pdata->clk), "failed to get clock\n");
 
-	pdata->sec_ao_map = syscon_regmap_lookup_by_phandle
-		(pdev->dev.of_node, "amlogic,ao-secure");
-	if (IS_ERR(pdata->sec_ao_map)) {
-		dev_err(dev, "syscon regmap lookup failed.\n");
-		return PTR_ERR(pdata->sec_ao_map);
+	pdata->trim_info_reg = devm_platform_ioremap_resource(pdev, 1);
+	if (IS_ERR(pdata->trim_info_reg)) {
+		pdata->sec_ao_map = syscon_regmap_lookup_by_phandle
+			(pdev->dev.of_node, "amlogic,ao-secure");
+		if (IS_ERR(pdata->sec_ao_map)) {
+			dev_err(dev, "syscon regmap lookup failed.\n");
+			return PTR_ERR(pdata->sec_ao_map);
+		}
 	}
 
 	pdata->tzd = devm_thermal_of_zone_register(&pdev->dev,
@@ -299,41 +298,38 @@ static int amlogic_thermal_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void amlogic_thermal_remove(struct platform_device *pdev)
+static int amlogic_thermal_remove(struct platform_device *pdev)
 {
 	struct amlogic_thermal *data = platform_get_drvdata(pdev);
 
-	amlogic_thermal_disable(data);
+	return amlogic_thermal_disable(data);
 }
 
-static int amlogic_thermal_suspend(struct device *dev)
+static int __maybe_unused amlogic_thermal_suspend(struct device *dev)
 {
 	struct amlogic_thermal *data = dev_get_drvdata(dev);
 
-	amlogic_thermal_disable(data);
-
-	return 0;
+	return amlogic_thermal_disable(data);
 }
 
-static int amlogic_thermal_resume(struct device *dev)
+static int __maybe_unused amlogic_thermal_resume(struct device *dev)
 {
 	struct amlogic_thermal *data = dev_get_drvdata(dev);
 
 	return amlogic_thermal_enable(data);
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(amlogic_thermal_pm_ops,
-				amlogic_thermal_suspend,
-				amlogic_thermal_resume);
+static SIMPLE_DEV_PM_OPS(amlogic_thermal_pm_ops,
+			 amlogic_thermal_suspend, amlogic_thermal_resume);
 
 static struct platform_driver amlogic_thermal_driver = {
 	.driver = {
 		.name		= "amlogic_thermal",
-		.pm		= pm_ptr(&amlogic_thermal_pm_ops),
+		.pm		= &amlogic_thermal_pm_ops,
 		.of_match_table = of_amlogic_thermal_match,
 	},
-	.probe = amlogic_thermal_probe,
-	.remove_new = amlogic_thermal_remove,
+	.probe	= amlogic_thermal_probe,
+	.remove	= amlogic_thermal_remove,
 };
 
 module_platform_driver(amlogic_thermal_driver);
