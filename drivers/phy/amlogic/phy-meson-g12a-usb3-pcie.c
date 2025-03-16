@@ -11,7 +11,7 @@
 #include <linux/bitops.h>
 #include <linux/clk.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/phy/phy.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
@@ -350,7 +350,7 @@ static int phy_g12a_usb3_pcie_exit(struct phy *phy)
 }
 
 static struct phy *phy_g12a_usb3_pcie_xlate(struct device *dev,
-					    const struct of_phandle_args *args)
+					    struct of_phandle_args *args)
 {
 	struct phy_g12a_usb3_pcie_priv *priv = dev_get_drvdata(dev);
 	unsigned int mode;
@@ -412,13 +412,14 @@ static int phy_g12a_usb3_pcie_probe(struct platform_device *pdev)
 		return PTR_ERR(priv->clk_ref);
 
 	priv->reset = devm_reset_control_array_get_exclusive(dev);
-	if (IS_ERR(priv->reset))
+	if (IS_ERR(priv->reset)) {
 		return PTR_ERR(priv->reset);
+	}
 
 	priv->phy = devm_phy_create(dev, np, &phy_g12a_usb3_pcie_ops);
 	if (IS_ERR(priv->phy))
 		return dev_err_probe(dev, PTR_ERR(priv->phy), "failed to create PHY\n");
-
+			
 	phy_set_drvdata(priv->phy, priv);
 	dev_set_drvdata(dev, priv);
 
