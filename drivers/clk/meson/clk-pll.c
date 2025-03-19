@@ -337,16 +337,14 @@ static int meson_clk_pll_init(struct clk_hw *hw)
 
 static int meson_clk_pcie_pll_enable(struct clk_hw *hw)
 {
-	int retries = 10;
+	int retries;
+ 		for (retries = 0; retries < 10; retries ++)
 
 	do {
-		int retries;
-		for (retries = 0; retries < 10; retries ++) {
 		meson_clk_pll_init(hw);
 		if (!meson_clk_pll_wait_lock(hw))
 			return 0;
-		pr_info("PCIe PLL clock, retry enabling ..\n");
-		}
+		pr_info("Retry enabling PCIe PLL clock\n");
 	} while (--retries);
 
 	return -EIO;
